@@ -2315,8 +2315,8 @@ class Adventure(BaseCog):
                 )
             )
         if "forage" not in c.heroclass:
-            c.heroclass["forage"] = 7201
-        if c.heroclass["forage"] <= time.time() - 7200:
+            c.heroclass["forage"] = 1801
+        if c.heroclass["forage"] <= time.time() - 1800:
             await self._open_chest(ctx, c.heroclass["pet"]["name"], "pet")
             async with self.get_lock(ctx.author):
                 try:
@@ -2327,7 +2327,7 @@ class Adventure(BaseCog):
                 c.heroclass["forage"] = time.time()
                 await self.config.user(ctx.author).set(c._to_json())
         else:
-            cooldown_time = (c.heroclass["forage"] + 7200) - time.time()
+            cooldown_time = (c.heroclass["forage"] + 1800) - time.time()
             return await ctx.send(
                 _("This command is on cooldown. Try again in {}.").format(
                     humanize_timedelta(seconds=cooldown_time)
@@ -2835,14 +2835,14 @@ class Adventure(BaseCog):
         attribute = random.choice(list(self.ATTRIBS.keys()))
 
         if self.MONSTERS[challenge]["boss"]:
-            timer = 120
+            timer = 240
             text = box(_("\n [{} Alarm!]").format(challenge), lang="css")
             self.bot.dispatch("adventure_boss", ctx)  # dispatches an event on bosses
         elif self.MONSTERS[challenge]["miniboss"]:
-            timer = 60
+            timer = 120
             self.bot.dispatch("adventure_miniboss", ctx)
         else:
-            timer = 30
+            timer = 60
         self._sessions[ctx.guild.id] = GameSession(
             challenge=challenge,
             attribute=attribute,
@@ -2869,18 +2869,18 @@ class Adventure(BaseCog):
         dragon_text = _(
             "but **a{attr} {chall}** just landed in front of you glaring! \n\n"
             "What will you do and will other heroes be brave enough to help you?\n"
-            "Heroes have 2 minutes to participate via reaction:"
+            "Heroes have 4 minutes to participate via reaction:"
         ).format(attr=session.attribute, chall=session.challenge)
         basilisk_text = _(
             "but **a{attr} {chall}** stepped out looking around. \n\n"
             "What will you do and will other heroes help your cause?\n"
-            "Heroes have 1 minute to participate via reaction:"
+            "Heroes have 2 minutes to participate via reaction:"
         ).format(attr=session.attribute, chall=session.challenge)
         normal_text = _(
             "but **a{attr} {chall}** "
             "is guarding it with{threat}. \n\n"
             "What will you do and will other heroes help your cause?\n"
-            "Heroes have 30s to participate via reaction:"
+            "Heroes have 1m to participate via reaction:"
         ).format(
             attr=session.attribute, chall=session.challenge, threat=random.choice(self.THREATEE)
         )
@@ -2899,7 +2899,7 @@ class Adventure(BaseCog):
                 adventure_msg = await ctx.send(embed=embed)
             else:
                 adventure_msg = await ctx.send(f"{adventure_msg}\n{dragon_text}")
-            timeout = 120
+            timeout = 240
 
         elif session.miniboss:
             if use_embeds:
@@ -2910,7 +2910,7 @@ class Adventure(BaseCog):
                 adventure_msg = await ctx.send(embed=embed)
             else:
                 adventure_msg = await ctx.send(f"{adventure_msg}\n{basilisk_text}")
-            timeout = 60
+            timeout = 120
         else:
             if use_embeds:
                 embed.description = f"{adventure_msg}\n{normal_text}"
@@ -2919,7 +2919,7 @@ class Adventure(BaseCog):
                 adventure_msg = await ctx.send(embed=embed)
             else:
                 adventure_msg = await ctx.send(f"{adventure_msg}\n{normal_text}")
-            timeout = 30
+            timeout = 60
         session.message_id = adventure_msg.id
         start_adding_reactions(adventure_msg, self._adventure_actions, ctx.bot.loop)
         timer = await self._adv_countdown(ctx, session.timer, _("Time remaining: "))
