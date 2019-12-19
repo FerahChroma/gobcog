@@ -3266,7 +3266,8 @@ class Adventure(BaseCog):
             )
         cooldown = await self.config.guild(ctx.guild).cooldown()
         #  cooldown_time = 420
-        cooldown_time = 180
+        #  cooldown_time = 180
+        cooldown_time = 120
 
         if cooldown + cooldown_time <= time.time():
             await self.config.guild(ctx.guild).cooldown.set(time.time())
@@ -5492,11 +5493,17 @@ class Adventure(BaseCog):
                     cha = item.cha
                     intel = item.int
                 if item.rarity == "epic":
-                    price = random.randint(10000, 50000) * max(att + cha + intel, 1)
-                elif item.rarity == "rare":
+                    #  price = random.randint(10000, 50000) * max(att + cha + intel, 1)
+                    #  price = random.randint(3000, 6000) * max(att + cha + intel, 1)
                     price = random.randint(2000, 5000) * max(att + cha + intel, 1)
+                elif item.rarity == "rare":
+                    #  price = random.randint(2000, 5000) * max(att + cha + intel, 1)
+                    #  price = random.randint(500, 2000) * max(att + cha + intel, 1)
+                    price = random.randint(250, 500) * max(att + cha + intel, 1)
                 else:
-                    price = random.randint(100, 250) * max(att + cha + intel, 1)
+                    #  price = random.randint(100, 250) * max(att + cha + intel, 1)
+                    #  price = random.randint(200, 400) * max(att + cha + intel, 1)
+                    price = random.randint(50, 100) * max(att + cha + intel, 1)
                 if itemname not in items:
                     items.update(
                         {
