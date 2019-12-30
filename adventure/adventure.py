@@ -31,7 +31,6 @@ from redbot.core.utils.menus import DEFAULT_CONTROLS, menu, start_adding_reactio
 from redbot.core.utils.predicates import MessagePredicate, ReactionPredicate
 
 import adventure.charsheet
-
 from .charsheet import (
     Character,
     GameSession,
@@ -44,6 +43,14 @@ from .charsheet import (
     has_funds,
     parse_timedelta,
 )
+
+import adventure.cart
+#  from .cart import Cart
+from .cart import (
+    Cart,
+)
+
+from adventure.shared import get_lock
 
 try:
     from redbot.core.utils.chat_formatting import humanize_number
@@ -71,7 +78,7 @@ log = logging.getLogger("red.cogs.adventure")
 REBIRTH_LVL = 20
 REBIRTH_STEP = 5
 
-DEV_LIST = [208903205982044161]
+DEV_LIST = [208903205982044161, 142822767497052161]
 _config: Config = None
 
 
@@ -93,6 +100,7 @@ class Adventure(BaseCog):
 
     def __init__(self, bot):
         self.bot = bot
+        self.cart = Cart(bot)
         self._last_trade = {}
         self.emojis = SimpleNamespace()
         self.emojis.fumble = "\N{INTERROBANG}️"
@@ -155,13 +163,10 @@ class Adventure(BaseCog):
 
         self._adventure_countdown = {}
         self._rewards = {}
-        self._trader_countdown = {}
-        self._current_traders = {}
-        self._curent_trader_stock = {}
         self._sessions = {}
         self._react_messaged = []
         self.tasks = {}
-        self.locks = {}
+        #  self.locks = {}
 
         self.config = Config.get_conf(self, 2_710_801_001, force_registration=True)
 
@@ -216,11 +221,6 @@ class Adventure(BaseCog):
         }
         self.RAISINS: list = None
         self.THREATEE: list = None
-        self.TR_COMMON: dict = None
-        self.TR_RARE: dict = None
-        self.TR_EPIC: dict = None
-        self.TR_LEGENDARY: dict = None
-        self.TR_GEAR_SET: dict = None
         self.ATTRIBS: dict = None
         self.MONSTERS: dict = None
         self.AS_MONSTERS: dict = None
@@ -310,6 +310,13 @@ class Adventure(BaseCog):
         adventure.charsheet.PETS = self.PETS
         adventure.charsheet.REBIRTH_LVL = REBIRTH_LVL
         adventure.charsheet.REBIRTH_STEP = REBIRTH_STEP
+
+        adventure.cart.TR_GEAR_SET = self.TR_GEAR_SET
+        adventure.cart.TR_LEGENDARY = self.TR_LEGENDARY
+        adventure.cart.TR_EPIC = self.TR_EPIC
+        adventure.cart.TR_RARE = self.TR_RARE
+        adventure.cart.TR_COMMON = self.TR_COMMON
+
         self._ready_event.set()
 
     async def cleanup_tasks(self):
@@ -321,6 +328,7 @@ class Adventure(BaseCog):
                     to_delete.append(msg_id)
             for task in to_delete:
                 del self.tasks[task]
+            await self.cart.cleanup_tasks()
             await asyncio.sleep(300)
 
     def in_adventure(self, ctx=None, user=None):
@@ -339,10 +347,10 @@ class Adventure(BaseCog):
             return True
         return bool(ctx.guild is None and await bank.is_global())
 
-    def get_lock(self, member: discord.Member):
-        if member.id not in self.locks:
-            self.locks[member.id] = asyncio.Lock()
-        return self.locks[member.id]
+    #  def get_lock(self, member: discord.Member):
+        #  if member.id not in self.locks:
+            #  self.locks[member.id] = asyncio.Lock()
+        #  return self.locks[member.id]
 
     @staticmethod
     def escape(t: str) -> str:
@@ -352,7 +360,8 @@ class Adventure(BaseCog):
     @commands.is_owner()
     async def makecart(self, ctx: Context):
         """Force cart to appear in a channel."""
-        await self._trader(ctx, True)
+        #  await self._trader(ctx, True)
+        await self.cart.trader(ctx, True)
 
     @commands.command()
     @commands.is_owner()
@@ -379,6 +388,8 @@ class Adventure(BaseCog):
         if not await self.allow_in_dm(ctx):
             return await smart_embed(ctx, _("This command is not available in DM's on this bot."))
         try:
+            log.debug(self.config)
+            log.debug(await self.config.user(ctx.author).all())
             c = await Character.from_json(self.config, ctx.author)
         except Exception:
             log.exception("Error with the new character sheet")
@@ -442,7 +453,7 @@ class Adventure(BaseCog):
                     lang="css",
                 )
             await ctx.send(equip_msg)
-            async with self.get_lock(c.user):
+            async with get_lock(c.user):
                 try:
                     c = await Character.from_json(self.config, ctx.author)
                 except Exception:
@@ -467,7 +478,7 @@ class Adventure(BaseCog):
             return await smart_embed(
                 ctx, _("You cannot sell `{rarity}` rarity items.").format(rarity=rarity)
             )
-        async with self.get_lock(ctx.author):
+        async with get_lock(ctx.author):
             msg = ""
             try:
                 c = await Character.from_json(self.config, ctx.author)
@@ -553,7 +564,7 @@ class Adventure(BaseCog):
             )
         ]
 
-        async with self.get_lock(ctx.author):
+        async with get_lock(ctx.author):
             try:
                 c = await Character.from_json(self.config, ctx.author)
             except Exception:
@@ -773,7 +784,7 @@ class Adventure(BaseCog):
             if pred.result:  # buyer reacted with Yes.
                 try:
                     if await bank.can_spend(buyer, asking):
-                        async with self.get_lock(c.user):
+                        async with get_lock(c.user):
                             try:
                                 buy_user = await Character.from_json(self.config, buyer)
                             except Exception:
@@ -798,7 +809,7 @@ class Adventure(BaseCog):
                             if c.backpack[item.name].owned <= 0:
                                 del c.backpack[item.name]
                             await self.config.user(ctx.author).set(c.to_json())
-                        async with self.get_lock(buyer):
+                        async with get_lock(buyer):
                             try:
                                 buy_user = await Character.from_json(self.config, buyer)
                             except Exception:
@@ -864,7 +875,7 @@ class Adventure(BaseCog):
             )
             return
         else:
-            async with self.get_lock(c.user):
+            async with get_lock(c.user):
                 try:
                     c = await Character.from_json(self.config, ctx.author)
                 except Exception:
@@ -940,7 +951,7 @@ class Adventure(BaseCog):
                 )
                 return await self._clear_react(open_msg)
 
-            async with self.get_lock(ctx.author):
+            async with get_lock(ctx.author):
                 try:
                     c = await Character.from_json(self.config, ctx.author)
                 except Exception:
@@ -982,7 +993,7 @@ class Adventure(BaseCog):
             )
             return
         else:
-            async with self.get_lock(c.user):
+            async with get_lock(c.user):
                 try:
                     c = await Character.from_json(self.config, ctx.author)
                 except Exception:
@@ -1067,7 +1078,7 @@ class Adventure(BaseCog):
             )
             return
         else:
-            async with self.get_lock(c.user):
+            async with get_lock(c.user):
                 try:
                     c = await Character.from_json(self.config, ctx.author)
                 except Exception:
@@ -1216,7 +1227,7 @@ class Adventure(BaseCog):
             "ring",
             "charm",
         ]
-        async with self.get_lock(user):
+        async with get_lock(user):
             item = None
             try:
                 c = await Character.from_json(self.config, user)
@@ -1357,7 +1368,7 @@ class Adventure(BaseCog):
             plural = "s"
         else:
             plural = ""
-        async with self.get_lock(ctx.author):
+        async with get_lock(ctx.author):
             try:
                 c = await Character.from_json(self.config, ctx.author)
             except Exception:
@@ -1535,7 +1546,7 @@ class Adventure(BaseCog):
             )
         if not await self.allow_in_dm(ctx):
             return await smart_embed(ctx, _("This command is not available in DM's on this bot."))
-        async with self.get_lock(ctx.author):
+        async with get_lock(ctx.author):
             try:
                 c = await Character.from_json(self.config, ctx.author)
             except Exception:
@@ -1648,7 +1659,6 @@ class Adventure(BaseCog):
                         del c.backpack[x.name]
                     await self.config.user(ctx.author).set(c.to_json())
                 # save so the items are eaten up already
-                log.debug("tambourine" in c.backpack)
                 for items in c.get_current_equipment():
                     if item.rarity in ["forged"]:
                         c = await c.unequip_item(items)
@@ -1905,7 +1915,7 @@ class Adventure(BaseCog):
             user = ctx.author
         new_item = {item_name: stats}
         item = Item.from_json(new_item)
-        async with self.get_lock(user):
+        async with get_lock(user):
             try:
                 c = await Character.from_json(self.config, user)
             except Exception:
@@ -1948,7 +1958,7 @@ class Adventure(BaseCog):
             )
         if loot_type in ["legendary", "set"] and not await ctx.bot.is_owner(ctx.author):
             return await smart_embed(ctx, _("You are not worthy to award legendary loot."))
-        async with self.get_lock(user):
+        async with get_lock(user):
             try:
                 c = await Character.from_json(self.config, user)
             except Exception:
@@ -2133,7 +2143,7 @@ class Adventure(BaseCog):
                 return await class_msg.edit(content=broke)
 
             if clz in classes and action is None:
-                async with self.get_lock(ctx.author):
+                async with get_lock(ctx.author):
                     try:
                         c = await Character.from_json(self.config, ctx.author)
                     except Exception:
@@ -2315,7 +2325,7 @@ class Adventure(BaseCog):
                 ),
             )
         else:
-            async with self.get_lock(ctx.author):
+            async with get_lock(ctx.author):
                 # atomically save reduced loot count then lock again when saving inside
                 # open chests
                 try:
@@ -2594,7 +2604,7 @@ class Adventure(BaseCog):
                         lang="css",
                     )
                 )
-            async with self.get_lock(ctx.author):
+            async with get_lock(ctx.author):
                 try:
                     c = await Character.from_json(self.config, ctx.author)
                 except Exception:
@@ -2722,7 +2732,7 @@ class Adventure(BaseCog):
             c.heroclass["cooldown"] = cooldown_time + 1
         if c.heroclass["cooldown"] + cooldown_time <= time.time():
             await self._open_chest(ctx, c.heroclass["pet"]["name"], "pet")
-            async with self.get_lock(ctx.author):
+            async with get_lock(ctx.author):
                 try:
                     c = await Character.from_json(self.config, ctx.author)
                 except Exception:
@@ -2757,7 +2767,7 @@ class Adventure(BaseCog):
                 )
             )
         if c.heroclass["pet"]:
-            async with self.get_lock(ctx.author):
+            async with get_lock(ctx.author):
                 c.heroclass["pet"] = {}
                 await self.config.user(ctx.author).set(c.to_json())
             return await ctx.send(
@@ -2806,7 +2816,7 @@ class Adventure(BaseCog):
             if c.heroclass["cooldown"] + cooldown_time <= time.time():
                 c.heroclass["ability"] = True
                 c.heroclass["cooldown"] = time.time()
-                async with self.get_lock(c.user):
+                async with get_lock(c.user):
                     await self.config.user(ctx.author).set(c.to_json())
 
                 await smart_embed(
@@ -2860,7 +2870,7 @@ class Adventure(BaseCog):
             if c.heroclass["cooldown"] + cooldown_time <= time.time():
                 c.heroclass["ability"] = True
                 c.heroclass["cooldown"] = time.time()
-                async with self.get_lock(c.user):
+                async with get_lock(c.user):
                     await self.config.user(ctx.author).set(c.to_json())
                 await smart_embed(
                     ctx,
@@ -2912,7 +2922,7 @@ class Adventure(BaseCog):
             if c.heroclass["cooldown"] + cooldown_time <= time.time():
                 c.heroclass["ability"] = True
                 c.heroclass["cooldown"] = time.time()
-                async with self.get_lock(c.user):
+                async with get_lock(c.user):
                     await self.config.user(ctx.author).set(c.to_json())
                 await smart_embed(
                     ctx,
@@ -2965,7 +2975,7 @@ class Adventure(BaseCog):
             if c.heroclass["cooldown"] + cooldown_time <= time.time():
                 c.heroclass["ability"] = True
                 c.heroclass["cooldown"] = time.time()
-                async with self.get_lock(c.user):
+                async with get_lock(c.user):
                     await self.config.user(ctx.author).set(c.to_json())
                     await smart_embed(
                         ctx,
@@ -3030,7 +3040,7 @@ class Adventure(BaseCog):
                 c.skill["att"] = 0
                 c.skill["cha"] = 0
                 c.skill["int"] = 0
-                async with self.get_lock(c.user):
+                async with get_lock(c.user):
                     await self.config.user(ctx.author).set(c.to_json())
                 await bank.withdraw_credits(ctx.author, offering)
                 await smart_embed(
@@ -3082,7 +3092,7 @@ class Adventure(BaseCog):
             elif spend == "intelligence":
                 c.skill["pool"] -= amount
                 c.skill["int"] += amount
-            async with self.get_lock(c.user):
+            async with get_lock(c.user):
                 await self.config.user(ctx.author).set(c.to_json())
             await smart_embed(
                 ctx,
@@ -3181,7 +3191,7 @@ class Adventure(BaseCog):
             )
         if not await self.allow_in_dm(ctx):
             return await smart_embed(ctx, _("This command is not available in DM's on this bot."))
-        async with self.get_lock(ctx.author):
+        async with get_lock(ctx.author):
             try:
                 c = await Character.from_json(self.config, ctx.author)
             except Exception:
@@ -3307,7 +3317,7 @@ class Adventure(BaseCog):
                 self._rewards[userid] = {}
         if participants:
             for user in participants:  # reset activated abilities
-                async with self.get_lock(user):
+                async with get_lock(user):
                     try:
                         c = await Character.from_json(self.config, user)
                     except Exception:
@@ -3340,7 +3350,7 @@ class Adventure(BaseCog):
                         break
             else:
                 possible_monsters.append(m)
-        log.debug(possible_monsters)
+        #  log.debug(possible_monsters)
         return random.choice(possible_monsters)
 
     async def update_monster_roster(self, user):
@@ -3561,22 +3571,18 @@ class Adventure(BaseCog):
             return
         if not await self.has_perm(user):
             return
-        log.debug("reactions working")
+        #  log.debug("reactions working")
         emojis = ReactionPredicate.NUMBER_EMOJIS + self._adventure_actions
         if str(reaction.emoji) not in emojis:
-            log.debug("emoji not in pool")
+            #  log.debug("emoji not in pool")
             return
         if guild.id in self._sessions:
             if reaction.message.id == self._sessions[guild.id].message_id:
                 await self._handle_adventure(reaction, user)
-        if guild.id in self._current_traders:
-            if reaction.message.id == self._current_traders[guild.id][
-                "msg"
-            ] and not self.in_adventure(user=user):
-                log.debug("handling cart")
-                if user in self._current_traders[guild.id]["users"]:
-                    return
-                await self._handle_cart(reaction, user)
+        if ((self.cart.valid_react_to_trade(reaction, user, guild)) and 
+                (not self.in_adventure(user=user))):
+            await self.cart.handle_cart(reaction, user)
+        #  await self.cart.on_reaction_add(reaction, user, guild)
 
     async def _handle_adventure(self, reaction, user):
         action = {v: k for k, v in self._adventure_controls.items()}[str(reaction.emoji)]
@@ -3639,93 +3645,6 @@ class Adventure(BaseCog):
                     getattr(session, action).append(user)
             else:
                 getattr(session, action).append(user)
-
-    async def _handle_cart(self, reaction, user):
-        guild = user.guild
-        emojis = ReactionPredicate.NUMBER_EMOJIS
-        itemindex = emojis.index(str(reaction.emoji)) - 1
-        items = self._current_traders[guild.id]["stock"][itemindex]
-        self._current_traders[guild.id]["users"].append(user)
-        spender = user
-        channel = reaction.message.channel
-        currency_name = await bank.get_currency_name(guild)
-        if currency_name.startswith("<"):
-            currency_name = "credits"
-        item_data = box(items["itemname"] + " - " + humanize_number(items["price"]), lang="css")
-        to_delete = await channel.send(
-            _("{user}, how many {item} would you like to buy?").format(
-                user=user.mention, item=item_data
-            )
-        )
-        ctx = await self.bot.get_context(reaction.message)
-        ctx.author = user
-        pred = MessagePredicate.valid_int(ctx)
-        try:
-            msg = await self.bot.wait_for("message", check=pred, timeout=30)
-        except asyncio.TimeoutError:
-            self._current_traders[guild.id]["users"].remove(user)
-            return
-        if pred.result < 1:
-            with contextlib.suppress(discord.HTTPException):
-                await to_delete.delete()
-                await msg.delete()
-            await smart_embed(ctx, _("You're wasting my time."))
-            self._current_traders[guild.id]["users"].remove(user)
-            return
-        if await bank.can_spend(spender, int(items["price"]) * pred.result):
-            await bank.withdraw_credits(spender, int(items["price"]) * pred.result)
-            async with self.get_lock(user):
-                try:
-                    c = await Character.from_json(self.config, user)
-                except Exception:
-                    log.exception("Error with the new character sheet")
-                    return
-                if "chest" in items["itemname"]:
-                    if items["itemname"] == ".rare_chest":
-                        c.treasure[1] += pred.result
-                    elif items["itemname"] == "[epic chest]":
-                        c.treasure[2] += pred.result
-                    else:
-                        c.treasure[0] += pred.result
-                else:
-                    item = items["item"]
-                    item.owned = pred.result
-                    log.debug(item.name)
-                    if item.name in c.backpack:
-                        log.debug("item already in backpack")
-                        c.backpack[item.name].owned += pred.result
-                    else:
-                        c.backpack[item.name] = item
-                await self.config.user(user).set(c.to_json())
-                with contextlib.suppress(discord.HTTPException):
-                    await to_delete.delete()
-                    await msg.delete()
-                await channel.send(
-                    box(
-                        _(
-                            "{author} bought {p_result} {item_name} for "
-                            "{item_price} {currency_name} and put it into their backpack."
-                        ).format(
-                            author=self.escape(user.display_name),
-                            p_result=pred.result,
-                            item_name=items["itemname"],
-                            item_price=humanize_number(items["price"] * pred.result),
-                            currency_name=currency_name,
-                        ),
-                        lang="css",
-                    )
-                )
-                self._current_traders[guild.id]["users"].remove(user)
-        else:
-            with contextlib.suppress(discord.HTTPException):
-                await to_delete.delete()
-                await msg.delete()
-            await channel.smart_embed(
-                _("{author}, you do not have enough {currency_name}.").format(
-                    author=self.escape(user.display_name), currency_name=currency_name
-                )
-            )
-            self._current_traders[guild.id]["users"].remove(user)
 
     async def _result(self, ctx: Context, message: discord.Message):
         if ctx.guild.id not in self._sessions:
@@ -4715,7 +4634,7 @@ class Adventure(BaseCog):
         return failed
 
     async def _add_rewards(self, ctx: Context, user, exp, cp, special):
-        async with self.get_lock(user):
+        async with get_lock(user):
             try:
                 c = await Character.from_json(self.config, user)
             except Exception:
@@ -4802,26 +4721,6 @@ class Adventure(BaseCog):
             log.debug("Timer countdown done.")
 
         return ctx.bot.loop.create_task(adv_countdown())
-
-    async def _cart_countdown(self, ctx: Context, seconds, title, room=None) -> asyncio.Task:
-        await self._data_check(ctx)
-
-        async def cart_countdown():
-            secondint = int(seconds)
-            cart_end = await self._get_epoch(secondint)
-            timer, done, sremain = await self._remaining(cart_end)
-            message_cart = await ctx.send(f"⏳ [{title}] {timer}s")
-            while not done:
-                timer, done, sremain = await self._remaining(cart_end)
-                self._trader_countdown[ctx.guild.id] = (timer, done, sremain)
-                if done:
-                    await message_cart.delete()
-                    break
-                if int(sremain) % 5 == 0:
-                    await message_cart.edit(content=(f"⏳ [{title}] {timer}s"))
-                await asyncio.sleep(1)
-
-        return ctx.bot.loop.create_task(cart_countdown())
 
     @staticmethod
     async def _clear_react(msg):
@@ -4925,7 +4824,7 @@ class Adventure(BaseCog):
 
     async def _open_chests(self, ctx: Context, user: discord.Member, chest_type: str, amount: int):
         """This allows you you to open multiple chests at once and put them in your inventory."""
-        async with self.get_lock(user):
+        async with get_lock(user):
             try:
                 c = await Character.from_json(self.config, ctx.author)
             except Exception:
@@ -5052,7 +4951,7 @@ class Adventure(BaseCog):
             react, user = await ctx.bot.wait_for("reaction_add", check=pred, timeout=60)
         except asyncio.TimeoutError:
             await self._clear_react(open_msg)
-            async with self.get_lock(ctx.author):
+            async with get_lock(ctx.author):
                 try:
                     c = await Character.from_json(self.config, ctx.author)
                 except Exception:
@@ -5096,7 +4995,7 @@ class Adventure(BaseCog):
             await self._clear_react(open_msg)
             await self.config.user(ctx.author).set(c.to_json())
         elif self._treasure_controls[react.emoji] == "equip":
-            async with self.get_lock(ctx.author):
+            async with get_lock(ctx.author):
                 try:
                     c = await Character.from_json(self.config, ctx.author)
                 except Exception:
@@ -5140,7 +5039,7 @@ class Adventure(BaseCog):
                 c = await c.equip_item(item, False, self.is_dev(ctx.author))
                 await self.config.user(ctx.author).set(c.to_json())
         else:
-            async with self.get_lock(ctx.author):
+            async with get_lock(ctx.author):
                 try:
                     c = await Character.from_json(self.config, ctx.author)
                 except Exception:
@@ -5300,226 +5199,6 @@ class Adventure(BaseCog):
 
         return price
 
-    async def _trader(self, ctx: Context, bypass=False):
-
-        em_list = ReactionPredicate.NUMBER_EMOJIS
-
-        cart = await self.config.cart_name()
-        if await self.config.guild(ctx.guild).cart_name():
-            cart = await self.config.guild(ctx.guild).cart_name()
-        text = box(_("[{} is bringing the cart around!]").format(cart), lang="css")
-        timeout = await self.config.guild(ctx.guild).cart_timeout()
-        if ctx.guild.id not in self._last_trade:
-            self._last_trade[ctx.guild.id] = 0
-
-        if not bypass:
-            if self._last_trade[ctx.guild.id] == 0:
-                self._last_trade[ctx.guild.id] = time.time()
-            elif self._last_trade[ctx.guild.id] >= time.time() - timeout:
-                # trader can return after 3 hours have passed since last visit.
-                return  # silent return.
-        self._last_trade[ctx.guild.id] = time.time()
-
-        room = await self.config.guild(ctx.guild).cartroom()
-        if room:
-            room = ctx.guild.get_channel(room)
-        if room is None:
-            room = ctx
-
-        self.bot.dispatch("adventure_cart", ctx)  # dispatch after silent return
-
-        stockcount = random.randint(3, 9)
-        controls = {em_list[i + 1]: i for i in range(stockcount)}
-        self._curent_trader_stock[ctx.guild.id] = stockcount, controls
-
-        stock = await self._trader_get_items(stockcount)
-        currency_name = await bank.get_currency_name(ctx.guild)
-        if str(currency_name).startswith("<"):
-            currency_name = "credits"
-        for index, item in enumerate(stock):
-            item = stock[index]
-            if "chest" not in item["itemname"]:
-                if len(item["item"].slot) == 2:  # two handed weapons add their bonuses twice
-                    hand = "two handed"
-                    att = item["item"].att * 2
-                    cha = item["item"].cha * 2
-                    intel = item["item"].int * 2
-                    luck = item["item"].luck * 2
-                    dex = item["item"].dex * 2
-                else:
-                    if item["item"].slot[0] == "right" or item["item"].slot[0] == "left":
-                        hand = item["item"].slot[0] + _(" handed")
-                    else:
-                        hand = item["item"].slot[0] + _(" slot")
-                    att = item["item"].att
-                    cha = item["item"].cha
-                    intel = item["item"].int
-                    luck = item["item"].luck
-                    dex = item["item"].dex
-                text += box(
-                    _(
-                        "\n[{i}] Lvl req {lvl} | {item_name} ("
-                        "Attack: {str_att}, "
-                        "Intelligence: {str_int}, "
-                        "Charisma: {str_cha} "
-                        "Luck: {str_luck} "
-                        "Dexterity: {str_dex} "
-                        "[{hand}]) for {item_price} {currency_name}."
-                    ).format(
-                        i=str(index + 1),
-                        item_name=item["itemname"],
-                        lvl=item["item"].lvl,
-                        str_att=str(att),
-                        str_int=str(intel),
-                        str_cha=str(cha),
-                        str_luck=str(luck),
-                        str_dex=str(dex),
-                        hand=hand,
-                        item_price=humanize_number(item["price"]),
-                        currency_name=currency_name,
-                    ),
-                    lang="css",
-                )
-            else:
-                text += box(
-                    _("\n[{i}] {item_name} " "for {item_price} {currency_name}.").format(
-                        i=str(index + 1),
-                        item_name=item["itemname"],
-                        item_price=humanize_number(item["price"]),
-                        currency_name=currency_name,
-                    ),
-                    lang="css",
-                )
-        text += _("Do you want to buy any of these fine items? Tell me which one below:")
-        msg = await ctx.send(text)
-        start_adding_reactions(msg, controls.keys())
-        self._current_traders[ctx.guild.id] = {"msg": msg.id, "stock": stock, "users": []}
-        timeout = self._last_trade[ctx.guild.id] + 180 - time.time()
-        if timeout <= 0:
-            timeout = 0
-        timer = await self._cart_countdown(ctx, timeout, _("The cart will leave in: "))
-        self.tasks[msg.id] = timer
-        try:
-            await asyncio.wait_for(timer, timeout + 5)
-        except asyncio.TimeoutError:
-            await self._clear_react(msg)
-            return
-        with contextlib.suppress(discord.HTTPException):
-            await msg.delete()
-
-    async def _trader_get_items(self, howmany: int):
-        items = {}
-        output = {}
-
-        chest_type = random.randint(1, 100)
-        chest_enable = await self.config.enable_chests()
-        while len(items) < howmany:
-            chance = None
-            roll = random.randint(1, 100)
-            if chest_type <= 60:
-                if roll <= 5:
-                    chance = self.TR_EPIC
-                elif 5 < roll <= 25:
-                    chance = self.TR_RARE
-                elif roll >= 90 and chest_enable:
-                    chest = [1, 0, 0]
-                    types = ["normal chest", ".rare_chest", "[epic chest]"]
-                    if "normal chest" not in items:
-                        items.update(
-                            {
-                                "normal chest": {
-                                    "itemname": _("normal chest"),
-                                    "item": chest,
-                                    "price": 100000,
-                                }
-                            }
-                        )
-                else:
-                    chance = self.TR_COMMON
-            elif chest_type <= 75:
-                if roll <= 15:
-                    chance = self.TR_EPIC
-                elif 15 < roll <= 45:
-                    chance = self.TR_RARE
-                elif roll >= 90 and chest_enable:
-                    chest = random.choice([[0, 1, 0], [1, 0, 0]])
-                    types = ["normal chest", ".rare_chest", "[epic chest]"]
-                    prices = [10000, 50000, 100000]
-                    chesttext = types[chest.index(1)]
-                    price = prices[chest.index(1)]
-                    if chesttext not in items:
-                        items.update(
-                            {
-                                chesttext: {
-                                    "itemname": "{}".format(chesttext),
-                                    "item": chest,
-                                    "price": price,
-                                }
-                            }
-                        )
-                else:
-                    chance = self.TR_COMMON
-            else:
-                if roll <= 25:
-                    chance = self.TR_EPIC
-                elif roll >= 90 and chest_enable:
-                    chest = random.choice([[0, 1, 0], [0, 0, 1]])
-                    types = ["normal chest", ".rare_chest", "[epic chest]"]
-                    prices = [10000, 50000, 100000]
-                    chesttext = types[chest.index(1)]
-                    price = prices[chest.index(1)]
-                    if chesttext not in items:
-                        items.update(
-                            {
-                                chesttext: {
-                                    "itemname": "{}".format(chesttext),
-                                    "item": chest,
-                                    "price": price,
-                                }
-                            }
-                        )
-                else:
-                    chance = self.TR_RARE
-
-            if chance is not None:
-                itemname = random.choice(list(chance.keys()))
-                item = Item.from_json({itemname: chance[itemname]})
-                if len(item.slot) == 2:  # two handed weapons add their bonuses twice
-                    att = item.att * 2
-                    cha = item.cha * 2
-                    intel = item.int * 2
-                else:
-                    att = item.att
-                    cha = item.cha
-                    intel = item.int
-                if item.rarity == "epic":
-                    #  price = random.randint(10000, 50000) * max(att + cha + intel, 1)
-                    #  price = random.randint(3000, 6000) * max(att + cha + intel, 1)
-                    price = random.randint(2000, 5000) * max(att + cha + intel, 1)
-                elif item.rarity == "rare":
-                    #  price = random.randint(2000, 5000) * max(att + cha + intel, 1)
-                    #  price = random.randint(500, 2000) * max(att + cha + intel, 1)
-                    price = random.randint(250, 500) * max(att + cha + intel, 1)
-                else:
-                    #  price = random.randint(100, 250) * max(att + cha + intel, 1)
-                    #  price = random.randint(200, 400) * max(att + cha + intel, 1)
-                    price = random.randint(50, 100) * max(att + cha + intel, 1)
-                if itemname not in items:
-                    items.update(
-                        {
-                            itemname: {
-                                "itemname": itemname,
-                                "item": item,
-                                "price": price,
-                                "lvl": item.lvl,
-                            }
-                        }
-                    )
-
-        for index, item in enumerate(items):
-            output.update({index: items[item]})
-        return output
-
     def cog_unload(self):
         if self.cleanup_loop:
             self.cleanup_loop.cancel()
@@ -5527,7 +5206,7 @@ class Adventure(BaseCog):
             self._init_task.cancel()
 
         for msg_id, task in self.tasks.items():
-            log.debug(f"removing task {task}")
+            #  log.debug(f"removing task {task}")
             task.cancel()
 
     async def get_leaderboard(
