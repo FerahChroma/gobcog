@@ -77,7 +77,7 @@ REBIRTH_STEP = 5
 
 _config: Config = None
 
-RAID_COOLDOWN_TIME = 5
+RAID_COOLDOWN_TIME = 3
 
 async def smart_embed(ctx, message):
     if ctx.guild:
@@ -88,6 +88,102 @@ async def smart_embed(ctx, message):
         return await ctx.maybe_send_embed(message)
     return await ctx.send(message)
 
+class AdventureResults:
+    """Object to store recent adventure results."""
+
+    def __init__(self, num_raids):
+        """TODO: to be defined1. """
+        self._num_raids = num_raids
+        self._last_raids = []
+
+    def add_result(self, main_action, amount, num_ppl, success):
+        """Add result to this object.
+
+        :main_action: Main damage action taken by the adventurers
+            (highest amount dealt). Should be either "attack" or
+            "talk". Running will just be notated by a 0 amount.
+        :amount: Amount dealt.
+        :num_ppl: Number of people in adventure.
+        :success: Whether adventure was successful or not.
+        """
+        if len(self._last_raids) >= self._num_raids:
+            self._last_raids.pop(0)
+        raid_dict = {}
+        for var in ('main_action', 'amount', 'num_ppl', 'success'):
+            raid_dict[var] = locals()[var]
+        self._last_raids.append(raid_dict)
+
+    def get_stat_range(self):
+        """Return reasonable stat range for monster pool to have based
+        on last few raids' damage.
+
+        :returns: Dict with stat_type, min_stat and max_stat.
+        """
+        # how much % to increase damage for solo raiders so that they
+        # can't just solo every monster based on their own average
+        # damage
+        SOLO_RAID_SCALE = 0.25
+        if len(self._last_raids) == 0:
+            return {
+                    'stat_type': "hp",
+                    'min_stat': 0,
+                    'max_stat': 0,
+                    }
+
+        # tally up stats for raids
+        num_attack = 0
+        dmg_amount = 0
+        num_talk = 0
+        talk_amount = 0
+        num_wins = 0
+        for raid in self._last_raids:
+            if raid["main_action"] == "attack":
+                num_attack += 1
+                dmg_amount += raid["amount"]
+                if raid["num_ppl"] == 1:
+                    dmg_amount += raid["amount"] * SOLO_RAID_SCALE
+            else:
+                num_talk += 1
+                talk_amount += raid["amount"]
+                if raid["num_ppl"] == 1:
+                    talk_amount += raid["amount"] * SOLO_RAID_SCALE
+            log.debug(f"dmg: {dmg_amount}")
+            if raid["success"]:
+                num_wins += 1
+
+        # calculate relevant stats
+        if num_wins == 0:
+            num_wins = 0.5
+        win_percent = num_wins / self._num_raids
+        stat_type = "hp"
+        avg_amount = 0
+        if num_attack > 0:
+            avg_amount = dmg_amount / num_attack 
+        if dmg_amount < talk_amount:
+            stat_type = "dipl"
+            avg_amount = talk_amount / num_talk
+
+        # return main stat and range
+        min_stat = avg_amount * .75
+        max_stat = avg_amount * 2
+        # want win % to be at least 50%, even when solo
+        # if win % is below 50%, scale back min/max for easier mons
+        if win_percent < .5:
+            min_stat = avg_amount * win_percent
+            max_stat = avg_amount * 1.5
+        log.debug(stat_type)
+        log.debug(f"win %: {win_percent}")
+        log.debug(f"avg. dmg: {avg_amount}")
+        log.debug(f"min stat: {min_stat}")
+        log.debug(f"max stat: {max_stat}")
+
+        stats_dict = {}
+        for var in ('stat_type', 'min_stat', 'max_stat'):
+            stats_dict[var] = locals()[var]
+        return stats_dict
+
+    def __str__(self):
+        return str(self._last_raids)
 
 @cog_i18n(_)
 class Adventure(BaseCog):
@@ -98,6 +194,7 @@ class Adventure(BaseCog):
     def __init__(self, bot):
         self.bot = bot
         self._last_trade = {}
+        self._adv_results = AdventureResults(5)
         self.emojis = SimpleNamespace()
         self.emojis.fumble = "\N{EXCLAMATION QUESTION MARK}"
         self.emojis.level_up = "\N{BLACK UP-POINTING DOUBLE TRIANGLE}"
@@ -3366,8 +3463,17 @@ class Adventure(BaseCog):
             log.exception("Error with the new character sheet", exc_info=True)
             return
         possible_monsters = []
+        stat_range = self._adv_results.get_stat_range()
         for e, (m, stats) in enumerate(self.MONSTER_NOW.items(), 1):
-            if e not in range(10) and (stats["hp"] + stats["dipl"]) > (c.total_stats * 15):
+            appropriate_range = ((stats["hp"] + stats["dipl"]) <= 
+                    (c.total_stats * 15))
+            if stat_range["max_stat"] > 0:
+                main_stat = (stats["hp"] 
+                        if (stat_range["stat_type"] == "attack") 
+                        else stats["dipl"]) 
+                appropriate_range = (main_stat >= stat_range["min_stat"]
+                        and main_stat <= stat_range["max_stat"])
+            if not appropriate_range:
                 continue
             if not stats["boss"] and not stats["miniboss"]:
                 count = 0
@@ -3393,16 +3499,13 @@ class Adventure(BaseCog):
         else:
             self.monster_stats = 1
 
-        if c.rebirths >= 25:
-            monsters = self.AS_MONSTERS
+        self.MONSTER_NOW = self.MONSTERS
+        if c.rebirths >= 10:
+            self.MONSTER_NOW.update(self.AS_MONSTERS)
+        if c.rebirths >= 15:
             self.monster_stats = 1 + max((c.rebirths // 25) - 1, 0)
-        elif c.rebirths >= 15:
-            monsters = {**self.AS_MONSTERS}
-        else:
-            self.monster_stats = 1
-            monsters = self.MONSTERS
 
-        self.MONSTER_NOW = monsters
+        log.debug(self.MONSTER_NOW)
 
     async def _simple(self, ctx: Context, adventure_msg, challenge=None):
         self.bot.dispatch("adventure", ctx)
@@ -3525,7 +3628,6 @@ class Adventure(BaseCog):
             + " - "
             + bold(_("Run")),
         )
-        log.debug(dragon_text)
 
         embed = discord.Embed(colour=discord.Colour.blurple())
         use_embeds = (
@@ -3632,7 +3734,6 @@ class Adventure(BaseCog):
             if reaction.message.id == self._current_traders[guild.id][
                 "msg"
             ] and not self.in_adventure(user=user):
-                log.debug("handling cart")
                 if user in self._current_traders[guild.id]["users"]:
                     return
                 await self._handle_cart(reaction, user)
@@ -3812,7 +3913,6 @@ class Adventure(BaseCog):
         self._sessions[ctx.guild.id].magic = magic_list
 
         people = len(fight_list) + len(magic_list) + len(talk_list) + len(pray_list) + len(run_list)
-        log.debug(f"{people} people")
 
         challenge = session.challenge
 
@@ -3846,15 +3946,16 @@ class Adventure(BaseCog):
             * self.monster_stats
         )
 
-        slain = (attack + magic) >= round(hp)
+        dmg_dealt = attack + magic
+        slain = dmg_dealt >= round(hp)
         persuaded = diplomacy >= round(dipl)
         damage_str = ""
         diplo_str = ""
-        if (attack + magic) > 0:
+        if dmg_dealt > 0:
             damage_str = _("The group {status} {challenge} **({result}/{int_hp})**.\n").format(
                 status=_("hit the") if failed or not slain else _("killed the"),
                 challenge=challenge,
-                result=humanize_number(attack + magic),
+                result=humanize_number(dmg_dealt),
                 int_hp=humanize_number(int(hp)),
             )
         if diplomacy > 0:
@@ -3867,6 +3968,13 @@ class Adventure(BaseCog):
                 diplomacy=humanize_number(diplomacy),
                 int_dipl=humanize_number(int(dipl)),
             )
+        if dmg_dealt >= diplomacy:
+            self._adv_results.add_result("attack", dmg_dealt, people,
+                    slain)
+        else:
+            self._adv_results.add_result("talk", diplomacy,
+                    people, persuaded)
+        log.debug(self._adv_results)
         result_msg = result_msg + "\n" + damage_str + diplo_str
 
         fight_name_list = []
@@ -4183,7 +4291,7 @@ class Adventure(BaseCog):
                     ctx,
                     fight_list + magic_list + talk_list + pray_list,
                     amount,
-                    round((((attack + magic) / hp) + (diplomacy / dipl)) * 0.25),
+                    round(((dmg_dealt / hp) + (diplomacy / dipl)) * 0.25),
                     treasure,
                 )
 
@@ -4246,7 +4354,7 @@ class Adventure(BaseCog):
                     ctx,
                     fight_list + magic_list + pray_list,
                     amount,
-                    round(((attack + magic) / hp) * 0.25),
+                    round((dmg_dealt / hp) * 0.25),
                     treasure,
                 )
 
@@ -5586,7 +5694,6 @@ class Adventure(BaseCog):
             self._init_task.cancel()
 
         for msg_id, task in self.tasks.items():
-            log.debug(f"removing task {task}")
             task.cancel()
 
     async def get_leaderboard(
